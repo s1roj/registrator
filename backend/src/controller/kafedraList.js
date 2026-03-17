@@ -27,7 +27,7 @@ module.exports.getDepartments = async (req, res) => {
 
 module.exports.sync = async (req, res) => {
   try {
-    const { departmentId, oquvYili, token } = req.body;
+    const { departmentId, oquvYili, semestrTuri, token } = req.body;
 
     if (!departmentId || !oquvYili || !token) {
       return res.status(400).json({
@@ -35,15 +35,24 @@ module.exports.sync = async (req, res) => {
       });
     }
 
-    syncFromApi(departmentId, oquvYili, token).catch((err) => {
-      console.error("Sync xatosi:", err.message);
-    });
+    if (semestrTuri && !["kuzgi", "bahorgi"].includes(semestrTuri)) {
+      return res.status(400).json({
+        error: "semestrTuri faqat 'kuzgi' yoki 'bahorgi' bo'lishi mumkin!",
+      });
+    }
+
+    syncFromApi(departmentId, oquvYili, semestrTuri || null, token).catch(
+      (err) => {
+        console.error("Sync xatosi:", err.message);
+      },
+    );
 
     res.json({
       success: true,
       message: "Sync boshlandi!",
       departmentId,
       oquvYili,
+      semestrTuri: semestrTuri || "hammasi",
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -117,92 +126,160 @@ module.exports.updateTasdiq = async (req, res) => {
   }
 };
 
-async function syncFromApi(departmentId, oquvYili, token) {
-  let page = 1;
-  let totalPages = 1;
-  let kafedraDoc = null;
+async function getMatchedSemesterCodes(
+  curriculumIds,
+  educationYear,
+  semestrTuri,
+  token,
+) {
+  const matchedCodes = [];
 
-  while (page <= totalPages) {
-    console.log(`Sync: sahifa ${page} / ${totalPages}`);
-
-    const res = await axios.get(`${BASE_URL}/curriculum-subject-list`, {
+  for (const currId of curriculumIds) {
+    const semRes = await axios.get(`${BASE_URL}/semester-list`, {
       headers: { Authorization: `Bearer ${token}` },
-      params: { _department: departmentId, page },
+      params: { _curriculum: currId },
     });
 
-    const { items, pagination } = res.data.data;
-    totalPages = pagination.pageCount;
+    const semesters = semRes.data?.data?.items || [];
 
-    if (page === 1 && items.length > 0) {
-      const dept = items[0].department;
+    semesters.forEach((s) => {
+      if (s._education_year !== educationYear) return;
 
-      kafedraDoc = await Kafedra.findOneAndUpdate(
-        { departmentId: dept.id },
-        {
-          $set: {
-            departmentId: dept.id,
-            name: dept.name,
-            code: dept.code,
-            structureType: dept.structureType,
-            localityType: dept.localityType,
-            parent: dept.parent,
-            active: dept.active,
-            oquvYili,
-          },
-          $setOnInsert: {
-            tasdiqKuzgi: false,
-            tasdiqBahorgi: false,
-          },
-        },
-        { upsert: true, new: true },
-      );
+      const isKuzgi = s.position % 2 !== 0;
+      const isBahorgi = s.position % 2 === 0;
 
-      console.log(`Kafedra: ${kafedraDoc.name}`);
-    }
+      if (!semestrTuri) matchedCodes.push(s.code); // ← ikkalasi
+      if (semestrTuri === "kuzgi" && isKuzgi) matchedCodes.push(s.code);
+      if (semestrTuri === "bahorgi" && isBahorgi) matchedCodes.push(s.code);
+    });
+  }
 
-    if (!kafedraDoc) {
-      console.error("Kafedra topilmadi, sync to'xtatildi");
-      break;
-    }
+  return [...new Set(matchedCodes)];
+}
+async function syncFromApi(departmentId, oquvYili, semestrTuri, token) {
+  const educationYear = oquvYili.split("-")[0];
 
-    const operations = items.map((item) => ({
-      updateOne: {
-        filter: { itemId: item.id },
-        update: {
-          $set: {
-            kafedra: kafedraDoc._id,
-            itemId: item.id,
-            subject: item.subject,
-            subjectType: item.subjectType,
-            subjectBlock: item.subjectBlock,
-            subjectDetails: item.subjectDetails,
-            subjectExamTypes: item.subjectExamTypes,
-            ratingGrade: item.ratingGrade,
-            examFinish: item.examFinish,
-            semester: item.semester,
-            curriculum: item._curriculum,
-            total_acload: item.total_acload,
-            resource_count: item.resource_count,
-            in_group: item.in_group,
-            at_semester: item.at_semester,
-            active: item.active,
-            employees: item._employees || [],
-            credit: item.credit,
-            created_at: item.created_at,
-            updated_at: item.updated_at,
-          },
-        },
-        upsert: true,
+  console.log(
+    `Sync boshlandi: department=${departmentId}, oquvYili=${oquvYili}, semestrTuri=${semestrTuri}`,
+  );
+
+  const firstRes = await axios.get(`${BASE_URL}/curriculum-subject-list`, {
+    headers: { Authorization: `Bearer ${token}` },
+    params: { _department: departmentId, page: 1 },
+  });
+
+  const firstItems = firstRes.data.data.items;
+
+  if (firstItems.length === 0) {
+    console.error("Fanlar topilmadi");
+    return;
+  }
+
+  const curriculumIds = [...new Set(firstItems.map((i) => i._curriculum))];
+  console.log(`Curriculum ID lar:`, curriculumIds);
+
+  const matchedCodes = await getMatchedSemesterCodes(
+    curriculumIds,
+    educationYear,
+    semestrTuri,
+    token,
+  );
+
+  console.log(`Mos semester code lar (${semestrTuri}):`, matchedCodes);
+
+  if (matchedCodes.length === 0) {
+    console.error(`${oquvYili} uchun ${semestrTuri} semestrlar topilmadi`);
+    return;
+  }
+
+  const dept = firstItems[0].department;
+  const kafedraDoc = await Kafedra.findOneAndUpdate(
+    { departmentId: dept.id },
+    {
+      $set: {
+        departmentId: dept.id,
+        name: dept.name,
+        code: dept.code,
+        structureType: dept.structureType,
+        localityType: dept.localityType,
+        parent: dept.parent,
+        active: dept.active,
+        oquvYili,
+        semestrTuri,
       },
-    }));
+      $setOnInsert: {
+        tasdiqKuzgi: false,
+        tasdiqBahorgi: false,
+      },
+    },
+    { upsert: true, new: true },
+  );
 
-    await KafedraYuklama.bulkWrite(operations);
-    console.log(`${items.length} ta yozuv saqlandi (sahifa ${page})`);
+  console.log(`Kafedra: ${kafedraDoc.name}`);
+
+  let page = 1;
+  let totalPages = firstRes.data.data.pagination.pageCount;
+
+  while (page <= totalPages) {
+    console.log(`Sahifa: ${page} / ${totalPages}`);
+
+    let items;
+    if (page === 1) {
+      items = firstItems;
+    } else {
+      const res = await axios.get(`${BASE_URL}/curriculum-subject-list`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { _department: departmentId, page },
+      });
+      items = res.data.data.items;
+    }
+
+    const filteredItems = items.filter((item) =>
+      matchedCodes.includes(item.semester?.code),
+    );
+
+    console.log(`Jami: ${items.length}, mos: ${filteredItems.length}`);
+
+    if (filteredItems.length > 0) {
+      const operations = filteredItems.map((item) => ({
+        updateOne: {
+          filter: { itemId: item.id },
+          update: {
+            $set: {
+              kafedra: kafedraDoc._id,
+              itemId: item.id,
+              subject: item.subject,
+              subjectType: item.subjectType,
+              subjectBlock: item.subjectBlock,
+              subjectDetails: item.subjectDetails,
+              subjectExamTypes: item.subjectExamTypes,
+              ratingGrade: item.ratingGrade,
+              examFinish: item.examFinish,
+              semester: item.semester,
+              curriculum: item._curriculum,
+              total_acload: item.total_acload,
+              resource_count: item.resource_count,
+              in_group: item.in_group,
+              at_semester: item.at_semester,
+              active: item.active,
+              employees: item._employees || [],
+              credit: item.credit,
+              created_at: item.created_at,
+              updated_at: item.updated_at,
+            },
+          },
+          upsert: true,
+        },
+      }));
+
+      await KafedraYuklama.bulkWrite(operations);
+      console.log(`${filteredItems.length} ta yozuv saqlandi`);
+    }
 
     page++;
   }
 
   console.log(
-    `Sync tugadi! Kafedra: ${kafedraDoc?.name}, O'quv yili: ${oquvYili}`,
+    `Sync tugadi! Kafedra: ${kafedraDoc.name}, ${oquvYili} ${semestrTuri}`,
   );
 }

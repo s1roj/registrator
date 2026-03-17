@@ -28,6 +28,9 @@
               O'quv yili
             </th>
             <th class="text-left text-gray-500 font-medium px-5 py-3">
+              Semester turi
+            </th>
+            <th class="text-left text-gray-500 font-medium px-5 py-3">
               Tasdiqlash (Kuzgi)
             </th>
             <th class="text-left text-gray-500 font-medium px-5 py-3">
@@ -40,12 +43,12 @@
         </thead>
         <tbody>
           <tr v-if="loading">
-            <td colspan="6" class="text-center py-8 text-gray-400">
+            <td colspan="7" class="text-center py-8 text-gray-400">
               Yuklanmoqda...
             </td>
           </tr>
           <tr v-else-if="filteredKafedraList.length === 0">
-            <td colspan="6" class="text-center py-8 text-gray-400">
+            <td colspan="7" class="text-center py-8 text-gray-400">
               Ma'lumot yo'q
             </td>
           </tr>
@@ -59,6 +62,28 @@
               <span class="text-blue-500 hover:underline">{{ row.name }}</span>
             </td>
             <td class="px-5 py-3 text-gray-600">{{ row.oquvYili || "—" }}</td>
+            <td class="px-5 py-3">
+              <span
+                v-if="row.semestrTuri === 'kuzgi'"
+                class="text-xs px-2 py-0.5 rounded bg-orange-100 text-orange-600">
+                Kuzgi
+              </span>
+              <span
+                v-else-if="row.semestrTuri === 'bahorgi'"
+                class="text-xs px-2 py-0.5 rounded bg-green-100 text-green-600">
+                Bahorgi
+              </span>
+              <div v-else class="flex gap-1">
+                <span
+                  class="text-xs px-2 py-0.5 rounded bg-orange-100 text-orange-600"
+                  >Kuzgi</span
+                >
+                <span
+                  class="text-xs px-2 py-0.5 rounded bg-green-100 text-green-600"
+                  >Bahorgi</span
+                >
+              </div>
+            </td>
             <td class="px-5 py-3" @click.stop>
               <button
                 @click="toggleTasdiq(row, 'tasdiqKuzgi')"
@@ -95,6 +120,7 @@
         </tbody>
       </table>
     </div>
+
     <div
       v-if="showModal"
       class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50"
@@ -129,7 +155,7 @@
           </p>
         </div>
 
-        <div class="mb-6">
+        <div class="mb-4">
           <label class="block text-xs text-gray-500 mb-1">O'quv yili</label>
           <select
             v-model="form.oquvYili"
@@ -137,6 +163,18 @@
             <option value="">O'quv yilini tanlang</option>
             <option v-for="year in oquvYillar" :key="year" :value="year">
               {{ year }}
+            </option>
+          </select>
+        </div>
+
+        <div class="mb-6">
+          <label class="block text-xs text-gray-500 mb-1">Semester turi</label>
+          <select
+            v-model="form.semestrTuri"
+            class="w-full border border-gray-200 text-sm rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-300">
+            <option value="">Ikkalasi ham (kuzgi + bahorgi)</option>
+            <option v-for="s in oquvSemestrlar" :key="s.value" :value="s.value">
+              {{ s.label }}
             </option>
           </select>
         </div>
@@ -160,6 +198,7 @@
         </div>
       </div>
     </div>
+
     <div
       v-if="showItems"
       class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50"
@@ -240,12 +279,19 @@ export default {
   name: "KafedraYuklamalari",
   data() {
     return {
-      token: "Z3JCcc_28qcwegUzOk_d-DGOHn9vJSEa",
+      token: "token",
 
       loading: false,
       kafedraList: [],
       selectedYear: "",
-      oquvYillar: ["2024-2025", "2023-2024", "2022-2023"],
+      oquvYillar: [
+        "2025-2026",
+        "2024-2025",
+        "2023-2024",
+        "2022-2023",
+        "2021-2022",
+        "2020-2021",
+      ],
 
       showModal: false,
       deptLoading: false,
@@ -256,12 +302,18 @@ export default {
       form: {
         departmentId: "",
         oquvYili: "",
+        semestrTuri: "", 
       },
 
       showItems: false,
       selectedKafedra: null,
       items: [],
       itemsLoading: false,
+
+      oquvSemestrlar: [
+        { value: "kuzgi", label: "Kuzgi semestr" },
+        { value: "bahorgi", label: "Bahorgi semestr" },
+      ],
     };
   },
   computed: {
@@ -282,9 +334,10 @@ export default {
         this.loading = false;
       }
     },
+
     async openModal() {
       this.showModal = true;
-      this.form = { departmentId: "", oquvYili: "" };
+      this.form = { departmentId: "", oquvYili: "", semestrTuri: "" };
       this.syncError = "";
       this.deptError = "";
       this.departments = [];
@@ -315,11 +368,16 @@ export default {
       this.syncLoading = true;
       this.syncError = "";
       try {
-        await axios.post(`${API}/kafedra-yuklamalar/sync`, {
+        const body = {
           departmentId: this.form.departmentId,
           oquvYili: this.form.oquvYili,
           token: this.token,
-        });
+        };
+        if (this.form.semestrTuri) {
+          body.semestrTuri = this.form.semestrTuri;
+        }
+
+        await axios.post(`${API}/kafedra-yuklamalar/sync`, body);
         this.closeModal();
         setTimeout(() => {
           this.fetchKafedraList();
@@ -330,6 +388,7 @@ export default {
         this.syncLoading = false;
       }
     },
+
     async toggleTasdiq(row, field) {
       const prev = row[field];
       row[field] = !row[field];
@@ -342,6 +401,7 @@ export default {
         console.error(err);
       }
     },
+
     async openItems(row) {
       this.selectedKafedra = row;
       this.showItems = true;
@@ -351,8 +411,7 @@ export default {
         const res = await axios.get(`${API}/kafedra-yuklamalar`, {
           params: {
             departmentId: row.departmentId,
-            oquvYili: row.oquvYili,
-            limit: 1000,
+            limit: 10000,
           },
         });
         this.items = res.data.data;
