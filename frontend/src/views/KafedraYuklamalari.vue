@@ -41,7 +41,7 @@
             </th>
           </tr>
         </thead>
-        <tbody>
+        <tbody class="[&>tr>td]:text-left">
           <tr v-if="loading">
             <td colspan="7" class="text-center py-8 text-gray-400">
               Yuklanmoqda...
@@ -279,7 +279,7 @@ export default {
   name: "KafedraYuklamalari",
   data() {
     return {
-      token: "token",
+      token: "Z3JCcc_28qcwegUzOk_d-DGOHn9vJSEa",
 
       loading: false,
       kafedraList: [],
@@ -302,7 +302,7 @@ export default {
       form: {
         departmentId: "",
         oquvYili: "",
-        semestrTuri: "", 
+        semestrTuri: "",
       },
 
       showItems: false,
