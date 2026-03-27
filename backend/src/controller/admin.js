@@ -31,7 +31,6 @@ exports.register = async (req, res) => {
   } catch (err) {
     console.log("Register error:", err);
 
-    // Mongo duplicate key xatosi → E11000
     if (err.code === 11000) {
       return res.status(400).json({
         success: false,

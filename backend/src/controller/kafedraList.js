@@ -148,7 +148,7 @@ async function getMatchedSemesterCodes(
       const isKuzgi = s.position % 2 !== 0;
       const isBahorgi = s.position % 2 === 0;
 
-      if (!semestrTuri) matchedCodes.push(s.code); // ← ikkalasi
+      if (!semestrTuri) matchedCodes.push(s.code); 
       if (semestrTuri === "kuzgi" && isKuzgi) matchedCodes.push(s.code);
       if (semestrTuri === "bahorgi" && isBahorgi) matchedCodes.push(s.code);
     });
