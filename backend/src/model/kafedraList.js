@@ -7,24 +7,10 @@ const kafedraYuklamaSchema = mongoose.Schema(
       ref: "Kafedra",
       required: true,
     },
-
     itemId: { type: Number, unique: true },
-
-    subject: {
-      id:   Number,
-      name: String,
-      code: String,
-    },
-
-    subjectType: {
-      code: String,
-      name: String,
-    },
-
-    subjectBlock: {
-      code: String,
-      name: String,
-    },
+    subject: { id: Number, name: String, code: String },
+    subjectType: { code: String, name: String },
+    subjectBlock: { code: String, name: String },
 
     subjectDetails: [
       {
@@ -33,44 +19,25 @@ const kafedraYuklamaSchema = mongoose.Schema(
         academic_load: Number,
       },
     ],
-
     subjectExamTypes: [
       {
-        id:       Number,
+        id: Number,
         max_ball: Number,
         examType: { code: String, name: String },
       },
     ],
 
-    ratingGrade: {
-      code:       String,
-      name:       String,
-      template:   String,
-      updated_at: Number,
-    },
+    faculty: { id: Number, name: String, code: String }, 
+    specialty: { id: Number, name: String, code: String }, 
 
-    examFinish: {
-      code: String,
-      name: String,
-    },
-
-    semester: {
-      code: String,
-      name: String,
-    },
-
-    curriculum:     Number,
-    total_acload:   Number,
-    resource_count: Number,
-    in_group:       mongoose.Schema.Types.Mixed,
-    at_semester:    Boolean,
-    active:         Boolean,
-    employees:      [Number],
-    credit:         Number,
-    created_at:     Number,
-    updated_at:     Number,
+    semester: { code: String, name: String },
+    curriculum: Number,
+    total_acload: Number,
+    credit: Number,
+    active: Boolean,
+    employees: [Number],
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 module.exports = mongoose.model("KafedraYuklama", kafedraYuklamaSchema);
