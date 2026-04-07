@@ -10,18 +10,24 @@ function authHeaders(token) {
 
 function parseItems(resData) {
   if (resData?.data?.[0]?.items) {
+    const pag = resData.data[0].pagination;
+    const p = Array.isArray(pag) ? pag[0] : pag;
     return {
       items: resData.data[0].items,
-      pageCount: resData.data[0].pagination?.[0]?.pageCount || 1,
+      pageCount: p?.pageCount || 1,
+      totalCount: p?.totalCount || 0,
     };
   }
   if (resData?.data?.items) {
+    const pag = resData.data.pagination;
+    const p = Array.isArray(pag) ? pag[0] : pag;
     return {
       items: resData.data.items,
-      pageCount: resData.data.pagination?.pageCount || 1,
+      pageCount: p?.pageCount || 1,
+      totalCount: p?.totalCount || 0,
     };
   }
-  return { items: [], pageCount: 1 };
+  return { items: [], pageCount: 1, totalCount: 0 };
 }
 
 async function fetchAllCurriculums(token) {
@@ -31,7 +37,7 @@ async function fetchAllCurriculums(token) {
   while (true) {
     const res = await axios.get(`${BASE_URL}/curriculum-list`, {
       headers: authHeaders(token),
-      params: { limit: 200, page },
+      params: { page },
     });
     const parsed = parseItems(res.data);
     all = [...all, ...parsed.items];
@@ -40,6 +46,31 @@ async function fetchAllCurriculums(token) {
   }
 
   return all;
+}
+
+async function fetchGuruhSoni(curriculumId, token) {
+  try {
+    const res = await axios.get(`${BASE_URL}/group-list`, {
+      headers: authHeaders(token),
+      params: { _curriculum: curriculumId },
+    });
+    const parsed = parseItems(res.data);
+    return parsed.totalCount;
+  } catch (e) {
+    return 0;
+  }
+}
+
+async function fetchTalabalarSoni(curriculumId, token) {
+  try {
+    const res = await axios.get(`${BASE_URL}/student-list`, {
+      headers: authHeaders(token),
+      params: { _curriculum: curriculumId },
+    });
+    return parseItems(res.data).totalCount;
+  } catch (e) {
+    return 0;
+  }
 }
 
 function isSemestrMatched(semesterCode, semestrTuri) {
@@ -57,10 +88,19 @@ function isSemestrMatched(semesterCode, semestrTuri) {
 async function syncFromApi(departmentId, oquvYili, semestrTuri, token) {
   const allCurriculums = await fetchAllCurriculums(token);
 
+  console.log("Jami curriculumlar:", allCurriculums.length);
+  console.log(
+    "Birinchi curriculum educationYear:",
+    allCurriculums[0]?.educationYear,
+  );
+  console.log("oquvYili:", oquvYili);
+
   const matchedCurriculums = allCurriculums.filter((c) => {
     const code = String(c.educationYear?.code || "");
     return code === String(oquvYili) || code === oquvYili.split("-")[0];
   });
+
+  console.log("Mos curriculumlar:", matchedCurriculums.length);
 
   const matchedCurriculumMap = Object.fromEntries(
     matchedCurriculums.map((c) => [c.id, c]),
@@ -100,6 +140,23 @@ async function syncFromApi(departmentId, oquvYili, semestrTuri, token) {
     { upsert: true, new: true },
   );
 
+  const curriculumIds = [
+    ...new Set(firstParsed.items.map((i) => i._curriculum)),
+  ];
+
+  const guruhMap = {};
+  const talabalarMap = {};
+
+  for (const currId of curriculumIds) {
+    const [guruh, talaba] = await Promise.all([
+      fetchGuruhSoni(currId, token),
+      fetchTalabalarSoni(currId, token),
+    ]);
+    console.log(`currId: ${currId}, guruh: ${guruh}, talaba: ${talaba}`);
+    guruhMap[currId] = guruh;
+    talabalarMap[currId] = talaba;
+  }
+
   let page = 1;
   let totalSaved = 0;
   const totalPages = firstParsed.pageCount;
@@ -124,6 +181,9 @@ async function syncFromApi(departmentId, oquvYili, semestrTuri, token) {
     if (filtered.length > 0) {
       const ops = filtered.map((item) => {
         const curr = matchedCurriculumMap[item._curriculum];
+        console.log(
+          `item._curriculum: ${item._curriculum}, guruhMap: ${guruhMap[item._curriculum]}`,
+        );
         return {
           updateOne: {
             filter: { itemId: item.id },
@@ -162,6 +222,8 @@ async function syncFromApi(departmentId, oquvYili, semestrTuri, token) {
                 credit: item.credit,
                 active: item.active,
                 employees: item._employees,
+                guruhSoni: guruhMap[item._curriculum] || 0,
+                talabalarSoni: talabalarMap[item._curriculum] || 0,
               },
             },
             upsert: true,
