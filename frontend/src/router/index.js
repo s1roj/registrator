@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 import DefaultLayout from "@/layouts/DefaultLayout.vue";
+// router/index.js
+import YuklamaJadval from "@/views/yuklamaJadval.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -42,6 +44,7 @@ const router = createRouter({
           component: () => import("@/views/Sozlamalar.vue"),
           meta: { breadcrumb: "Sozlamalar" },
         },
+        { path: "yuklama-jadval", component: YuklamaJadval },
       ],
     },
   ],

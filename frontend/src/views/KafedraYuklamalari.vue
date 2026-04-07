@@ -56,7 +56,7 @@
             v-for="(row, index) in filteredKafedraList"
             :key="row._id"
             class="border-b border-gray-50 hover:bg-gray-50 transition cursor-pointer"
-            @click="openItems(row)">
+            @click="goToJadval(row)">
             <td class="px-5 py-3 text-gray-400">{{ index + 1 }}</td>
             <td class="px-5 py-3">
               <span class="text-blue-500 hover:underline">{{ row.name }}</span>
@@ -273,7 +273,7 @@
 <script>
 import axios from "axios";
 
-const API = "http://10.1.100.230:3300/api";
+const API = "http://localhost:3300/api";
 
 export default {
   name: "KafedraYuklamalari",
@@ -335,6 +335,17 @@ export default {
       }
     },
 
+    goToJadval(row) {
+      this.$router.push({
+        path: "/yuklama-jadval",
+        query: {
+          departmentId: row.departmentId,
+          oquvYili: row.oquvYili,
+          name: row.name,
+        },
+      });
+    },
+
     async openModal() {
       this.showModal = true;
       this.form = { departmentId: "", oquvYili: "", semestrTuri: "" };
@@ -355,7 +366,7 @@ export default {
         const res = await axios.get(`${API}/departments`, {
           headers: { Authorization: `Bearer ${this.token}` },
         });
-        this.departments = res.data.data?.data?.items || res.data.data || [];
+        this.departments = res.data.data || [];
       } catch (err) {
         this.deptError = "Kafedra ma'lumotlarini yuklab bo'lmadi";
       } finally {
@@ -402,25 +413,25 @@ export default {
       }
     },
 
-    async openItems(row) {
-      this.selectedKafedra = row;
-      this.showItems = true;
-      this.items = [];
-      this.itemsLoading = true;
-      try {
-        const res = await axios.get(`${API}/kafedra-yuklamalar`, {
-          params: {
-            departmentId: row.departmentId,
-            limit: 10000,
-          },
-        });
-        this.items = res.data.data;
-      } catch (err) {
-        console.error(err);
-      } finally {
-        this.itemsLoading = false;
-      }
-    },
+    // async openItems(row) {
+    //   this.selectedKafedra = row;
+    //   this.showItems = true;
+    //   this.items = [];
+    //   this.itemsLoading = true;
+    //   try {
+    //     const res = await axios.get(`${API}/kafedra-yuklamalar`, {
+    //       params: {
+    //         departmentId: row.departmentId,
+    //         limit: 10000,
+    //       },
+    //     });
+    //     this.items = res.data.data;
+    //   } catch (err) {
+    //     console.error(err);
+    //   } finally {
+    //     this.itemsLoading = false;
+    //   }
+    // },
 
     closeItems() {
       this.showItems = false;

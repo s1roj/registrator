@@ -4,159 +4,232 @@ const KafedraYuklama = require("../model/kafedraList");
 
 const BASE_URL = "https://student.tdmau.uz/rest/v1/data";
 
-async function getMatchedSemesterCodes(
-  curriculumIds,
-  educationYear,
-  semestrTuri,
-  token,
-) {
-  const matchedCodes = [];
-  const headers = { Authorization: `Bearer ${token}` };
+function authHeaders(token) {
+  return { Authorization: `Bearer ${token}` };
+}
 
-  for (const currId of curriculumIds) {
-    try {
-      const semRes = await axios.get(`${BASE_URL}/semester-list`, {
-        headers,
-        params: { _curriculum: currId },
-      });
+function parseItems(resData) {
+  if (resData?.data?.[0]?.items) {
+    return {
+      items: resData.data[0].items,
+      pageCount: resData.data[0].pagination?.[0]?.pageCount || 1,
+    };
+  }
+  if (resData?.data?.items) {
+    return {
+      items: resData.data.items,
+      pageCount: resData.data.pagination?.pageCount || 1,
+    };
+  }
+  return { items: [], pageCount: 1 };
+}
 
-      const semesters = semRes.data?.data?.items || [];
+async function fetchAllCurriculums(token) {
+  let page = 1;
+  let all = [];
 
-      semesters.forEach((s) => {
-        const sYear = s.educationYear?.code || s._education_year;
-        if (String(sYear) !== String(educationYear)) return;
-
-        const position = Number(s.position);
-        const isKuzgi = position % 2 !== 0;
-        const isBahorgi = position % 2 === 0;
-
-        const type = semestrTuri ? semestrTuri.toLowerCase() : null;
-
-        if (!type) {
-          matchedCodes.push(s.code);
-        } else if (type === "kuzgi" && isKuzgi) {
-          matchedCodes.push(s.code);
-        } else if (type === "bahorgi" && isBahorgi) {
-          matchedCodes.push(s.code);
-        }
-      });
-    } catch (e) {
-      console.error(`Semester API xatosi (Curriculum: ${currId}):`, e.message);
-    }
+  while (true) {
+    const res = await axios.get(`${BASE_URL}/curriculum-list`, {
+      headers: authHeaders(token),
+      params: { limit: 200, page },
+    });
+    const parsed = parseItems(res.data);
+    all = [...all, ...parsed.items];
+    if (page >= parsed.pageCount) break;
+    page++;
   }
 
-  return [...new Set(matchedCodes)];
+  return all;
+}
+
+function isSemestrMatched(semesterCode, semestrTuri) {
+  if (!semestrTuri) return true;
+  const parts = String(semesterCode).split("-");
+  const position = Number(parts[parts.length - 1]);
+  const isKuzgi = position % 2 !== 0;
+  const isBahorgi = position % 2 === 0;
+
+  if (semestrTuri === "kuzgi") return isKuzgi;
+  if (semestrTuri === "bahorgi") return isBahorgi;
+  return true;
 }
 
 async function syncFromApi(departmentId, oquvYili, semestrTuri, token) {
-  const educationYearCode = oquvYili.split("-")[0];
-  const headers = { Authorization: `Bearer ${token}` };
+  const allCurriculums = await fetchAllCurriculums(token);
 
-  console.log(`Sync boshlandi: Yil=${educationYearCode}, Turi=${semestrTuri}`);
-
-  const currListRes = await axios.get(`${BASE_URL}/curriculum-list`, {
-    headers,
-    params: { limit: 500 },
+  const matchedCurriculums = allCurriculums.filter((c) => {
+    const code = String(c.educationYear?.code || "");
+    return code === String(oquvYili) || code === oquvYili.split("-")[0];
   });
-  const allCurriculums = currListRes.data?.data?.items || [];
+
+  const matchedCurriculumMap = Object.fromEntries(
+    matchedCurriculums.map((c) => [c.id, c]),
+  );
+
   const firstRes = await axios.get(`${BASE_URL}/curriculum-subject-list`, {
-    headers,
+    headers: authHeaders(token),
     params: { _department: departmentId, page: 1 },
   });
 
-  const firstItems = firstRes.data?.data?.items || [];
-  if (firstItems.length === 0)
+  const firstParsed = parseItems(firstRes.data);
+  if (firstParsed.items.length === 0) {
     throw new Error("Ushbu kafedrada fanlar topilmadi!");
-  const curriculumIds = [...new Set(firstItems.map((i) => i._curriculum))];
-  const matchedCodes = await getMatchedSemesterCodes(
-    curriculumIds,
-    educationYearCode,
-    semestrTuri,
-    token,
-  );
-
-  if (matchedCodes.length === 0) {
-    throw new Error(
-      `${oquvYili} yil uchun mos ${semestrTuri} semestrlari topilmadi!`,
-    );
   }
 
-  const deptData = firstItems[0].department;
+  const deptData = firstParsed.items[0].department;
   const kafedraDoc = await Kafedra.findOneAndUpdate(
-    { departmentId: deptData.id },
+    {
+      departmentId: deptData.id,
+      oquvYili,
+      semestrTuri: semestrTuri || "hammasi",
+    },
     {
       $set: {
         departmentId: deptData.id,
         name: deptData.name,
+        code: deptData.code,
+        structureType: deptData.structureType,
+        localityType: deptData.localityType,
+        parent: deptData.parent,
+        active: deptData.active,
         oquvYili,
-        semestrTuri,
+        semestrTuri: semestrTuri || "hammasi",
       },
+      $setOnInsert: { tasdiqKuzgi: false, tasdiqBahorgi: false },
     },
     { upsert: true, new: true },
   );
 
   let page = 1;
-  let totalPages = firstRes.data.data.pagination.pageCount;
   let totalSaved = 0;
+  const totalPages = firstParsed.pageCount;
 
   while (page <= totalPages) {
     const res =
       page === 1
         ? firstRes
         : await axios.get(`${BASE_URL}/curriculum-subject-list`, {
-            headers,
+            headers: authHeaders(token),
             params: { _department: departmentId, page },
           });
 
-    const items = res.data.data.items;
-    const filteredItems = items.filter((item) =>
-      matchedCodes.includes(item.semester?.code),
-    );
+    const { items } = parseItems(res.data);
 
-    if (filteredItems.length > 0) {
-      const operations = filteredItems.map((item) => {
-        const plan = allCurriculums.find((c) => c.id === item._curriculum);
+    const filtered = items.filter((item) => {
+      const currMatched = matchedCurriculumMap[item._curriculum];
+      const semMatched = isSemestrMatched(item.semester?.code, semestrTuri);
+      return currMatched && semMatched;
+    });
+
+    if (filtered.length > 0) {
+      const ops = filtered.map((item) => {
+        const curr = matchedCurriculumMap[item._curriculum];
         return {
           updateOne: {
             filter: { itemId: item.id },
             update: {
               $set: {
-                kafedra: kafedraDoc._id,
+                departmentId: deptData.id,
+                oquvYili,
+                semestrTuri: semestrTuri || "hammasi",
                 itemId: item.id,
                 subject: item.subject,
+                subjectType: item.subjectType,
+                subjectBlock: item.subjectBlock,
                 subjectDetails: item.subjectDetails,
                 subjectExamTypes: item.subjectExamTypes,
+                ratingGrade: item.ratingGrade,
+                examFinish: item.examFinish,
                 semester: item.semester,
-                faculty: plan
-                  ? { id: plan.department?.id, name: plan.department?.name }
+                curriculumId: item._curriculum,
+                faculty: curr
+                  ? {
+                      id: curr.department?.id,
+                      name: curr.department?.name,
+                      code: curr.department?.code,
+                    }
                   : null,
-                specialty: plan
-                  ? { id: plan.specialty?.id, name: plan.specialty?.name }
+                specialty: curr
+                  ? {
+                      id: curr.specialty?.id,
+                      name: curr.specialty?.name,
+                      code: curr.specialty?.code,
+                    }
                   : null,
+                educationType: curr?.educationType || null,
+                educationForm: curr?.educationForm || null,
                 total_acload: item.total_acload,
                 credit: item.credit,
+                active: item.active,
+                employees: item._employees,
               },
             },
             upsert: true,
           },
         };
       });
-      await KafedraYuklama.bulkWrite(operations);
-      totalSaved += filteredItems.length;
+
+      await KafedraYuklama.bulkWrite(ops);
+      totalSaved += filtered.length;
     }
+
     page++;
   }
 
+  console.log(
+    `Sync tugadi: ${kafedraDoc.name}, ${oquvYili}, ${totalSaved} ta fan`,
+  );
   return { totalSaved };
 }
+
+module.exports.getDepartments = async (req, res) => {
+  try {
+    const authHeader = req.headers["authorization"];
+    if (!authHeader) {
+      return res.status(400).json({ error: "Authorization header majburiy!" });
+    }
+
+    const response = await axios.get(
+      `${BASE_URL}/department-list?_structure_type=12`,
+      { headers: { Authorization: authHeader } },
+    );
+
+    const raw = response.data;
+    let items = [];
+    if (raw?.data?.[0]?.items) items = raw.data[0].items;
+    else if (raw?.data?.items) items = raw.data.items;
+    else if (Array.isArray(raw?.data)) items = raw.data;
+
+    res.json({ success: true, data: items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
 module.exports.sync = async (req, res) => {
   try {
     const { departmentId, oquvYili, semestrTuri, token } = req.body;
-    syncFromApi(departmentId, oquvYili, semestrTuri, token).catch((e) =>
-      console.log(e),
+
+    if (!departmentId || !oquvYili || !token) {
+      return res
+        .status(400)
+        .json({ error: "departmentId, oquvYili va token majburiy!" });
+    }
+
+    syncFromApi(departmentId, oquvYili, semestrTuri || null, token).catch((e) =>
+      console.error("Sync xatosi:", e.message),
     );
-    res.json({ success: true, message: "Sync jarayoni boshlandi..." });
+
+    res.json({ success: true, message: "Sync boshlandi!" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports.getKafedraList = async (req, res) => {
+  try {
+    const data = await Kafedra.find().sort({ createdAt: -1 });
+    res.json({ success: true, data });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -164,21 +237,55 @@ module.exports.sync = async (req, res) => {
 
 module.exports.getAll = async (req, res) => {
   try {
-    const { departmentId, oquvYili, page = 1, limit = 20 } = req.query;
+    const { departmentId, oquvYili, page = 1, limit = 50 } = req.query;
+
     const filter = {};
+    if (departmentId) filter.departmentId = Number(departmentId);
     if (oquvYili) filter.oquvYili = oquvYili;
-    if (departmentId) {
-      const kafedra = await Kafedra.findOne({
-        departmentId: Number(departmentId),
-      });
-      if (kafedra) filter.kafedra = kafedra._id;
-    }
-    const data = await KafedraYuklama.find(filter)
-      .populate("kafedra", "name code departmentId")
-      .skip((page - 1) * limit)
-      .limit(Number(limit));
+
     const total = await KafedraYuklama.countDocuments(filter);
-    res.json({ success: true, data, total, page: Number(page) });
+
+    const data = await KafedraYuklama.find(filter)
+      .skip((Number(page) - 1) * Number(limit))
+      .limit(Number(limit))
+      .lean();
+
+    res.json({
+      success: true,
+      data,
+      total,
+      page: Number(page),
+      pageCount: Math.ceil(total / Number(limit)),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports.updateTasdiq = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { tasdiqKuzgi, tasdiqBahorgi } = req.body;
+
+    const updateFields = {};
+    if (tasdiqKuzgi !== undefined) updateFields.tasdiqKuzgi = tasdiqKuzgi;
+    if (tasdiqBahorgi !== undefined) updateFields.tasdiqBahorgi = tasdiqBahorgi;
+
+    if (Object.keys(updateFields).length === 0) {
+      return res
+        .status(400)
+        .json({ error: "tasdiqKuzgi yoki tasdiqBahorgi kerak!" });
+    }
+
+    const updated = await Kafedra.findByIdAndUpdate(
+      id,
+      { $set: updateFields },
+      { new: true },
+    );
+
+    if (!updated) return res.status(404).json({ error: "Topilmadi" });
+
+    res.json({ success: true, data: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -50,8 +50,8 @@ export default {
   data() {
     return {
       user: {
-        fullName: "HUSANOV JAMSHIBEK",
-        role: "Registrator ofisi",
+        fullName: "TUROPOV SIROJIDDIN",
+        role: "Administartor",
       },
     };
   },
